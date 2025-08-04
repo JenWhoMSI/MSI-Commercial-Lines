@@ -1,0 +1,128 @@
+With Policies AS (
+SELECT
+ptt.EffectiveDate AS TransactionEffectiveDate
+,CASE WHEN pt.PolicyNumber IN (87580087
+,87580087
+,87604447
+,87659195
+,88481782
+,88656256
+,88672456
+,89012997
+,89135199
+,88721937
+,89051870
+,89056146
+,88836084
+,89131854
+,89402486
+,89412643
+,89549827
+,89420799
+,89556806
+,89793113
+,89895197
+,89533052
+,89868783
+,90181715
+,90243290
+,90025080
+,90117007
+,90117007
+,90291936
+,90375207
+,90372698
+,90388581
+,90338863
+,90358461) THEN 'Renewal' ELSE rptt.PolicyTransactionTypeName END AS [Transaction Type]
+, ptt.PolicyTransactionTypeCode
+, pt.PolicyNumber
+, pt.PolicyTermID
+, pt.TermStartDate
+, pt.TermEndDate
+, ptt.PolicyTermSnapshotID
+, pts.PolicyPropertyAddressID
+, pt.CompanyPolicyNumber
+, pts.CancelDate
+, pts.IsActivePolicyTermSnapshot
+, pt.PolicyTermNumber
+, rpt.ProductTypeCode AS Product
+  ,pts.AgencyPartyID
+  ,pts.CompanyPartyID
+FROM policy.PolicyTermTransaction ptt
+INNER JOIN policy.PolicyTermSnapshot pts
+on pts.PolicyTermSnapshotID = ptt.PolicyTermSnapshotID AND pts.ProductTypeID IN (27,28,29)
+INNER JOIN policy.PolicyTerm pt ON pt.PolicyTermID = ptt.PolicyTermID --and pt.PolicyNumber = 89437273
+INNER JOIN product.ProductVersion pv ON pv.ProductVersionID = pts.ProductVersionID
+INNER JOIN product.Product p ON p.ProductID = pv.ProductID
+LEFT JOIN product.ProductVersionPaymentPlan pvpp ON pvpp.ProductVersionPaymentPlanID = pts.ProductVersionPaymentPlanID
+LEFT JOIN reference.PolicyTransactionType rptt ON rptt.PolicyTransactionTypeCode = ptt.PolicyTransactionTypeCode
+LEFT JOIN reference.ProductType rpt ON rpt.ProductTypeID = pts.ProductTypeID
+WHERE pts.ProductTypeID IN (27,28,29) AND ptt.PolicyTransactionTypeCode IN (1, 3)
+
+)
+
+,Customer AS (
+SELECT 
+	p.PolicyTermSnapshotID
+	,c.CustomerID
+	,c.FirstName
+	,c.LastName
+	,ce.EmailAddress
+	,ca.AddressLine1
+	,ca.AddressLine2
+	,ca.City
+	,ca.StateCode
+	,ca.ZipCode5
+FROM Policies p
+INNER JOIN policy.PolicyTermSnapshotCustomer ptsc on ptsc.PolicyTermSnapshotID = p.PolicyTermSnapshotID 
+AND ptsc.IsDeleted = 0 AND (ptsc.IsDelayedPhysicalDelete = 0 OR ptsc.IsDelayedPhysicalDelete IS NULL) AND ptsc.CustomerTypeCode = 1
+INNER JOIN customer.Customer c ON c.CustomerID = ptsc.CustomerID
+LEFT JOIN customer.CustomerEmail ce ON ce.CustomerID = c.CustomerID AND ce.IsDeleted = 0
+LEFT JOIN customer.CustomerPhoneNumber cpn ON cpn.CustomerID = c.CustomerID AND cpn.IsDeleted = 0
+LEFT JOIN customer.CustomerAddress ca ON ca.CustomerID = c.CustomerID AND ca.IsDeleted = 0 AND ca.AddressTypeCode = 6
+)
+
+,Fees AS (
+	SELECT 
+	ptsc.PolicyTermSnapshotID, 
+	SUM(CASE WHEN PolicyCostTypeCode IN (1, 2) THEN WrittenAmount ELSE 0 END) BasePremium, 
+	SUM(CASE WHEN PolicyCostTypeCode IN (3) THEN WrittenAmount ELSE 0 END) PolicyFees, 
+	SUM(CASE WHEN PolicyCostTypeCode IN (4, 6, 7) THEN WrittenAmount ELSE 0 END ) NonPolicyFees, 
+	SUM(CASE WHEN PolicyCostTypeCode IN (5) THEN WrittenAmount ELSE 0 END )PaymentSetupFees,
+	ROUND(SUM(ISNULL(NetChangeAmount,0)),2) NetChangeCostAmount
+	FROM 
+	policy.PolicyTermSnapshotCost ptsc
+	INNER JOIN Policies p ON p.PolicyTermSnapshotID = ptsc.PolicyTermSnapshotID
+	GROUP BY ptsc.PolicyTermSnapshotID
+)
+
+SELECT 
+ p.PolicyNumber AS [VIP Policy Number]
+,p.TransactionEffectiveDate
+,p.CompanyPolicyNumber AS [Policy Number]
+,p.[Transaction Type]
+,p.TermStartDate
+,p.TermEndDate
+,p.Product
+,p.AgencyPartyID
+ ,p.CompanyPartyID
+,c.FirstName
+,c.LastName
+,c.EmailAddress
+,c.AddressLine1
+,c.AddressLine2
+,c.City
+,c.StateCode
+,c.ZipCode5
+,f.BasePremium
+,f.NetChangeCostAmount AS [Net Change Written Premium]
+,f.NonPolicyFees
+,f.PaymentSetupFees
+,f.PolicyFees
+FROM Policies p
+LEFT JOIN Customer c ON c.PolicyTermSnapshotID = p.PolicyTermSnapshotID
+LEFT JOIN Fees f ON f.PolicyTermSnapshotID = p.PolicyTermSnapshotID
+
+WHERE   f.NetChangeCostAmount <> 0
+--AND PolicyNumber=88672456
